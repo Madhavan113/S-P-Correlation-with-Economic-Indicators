@@ -1,0 +1,7 @@
+---
+title: "About"
+---
+
+My name is Madhavan Prasanna, and i'm developing a data-science project. Feel free to email me questions at its1gonbeoff@gmail.com
+
+https://github.com/Madhavan113/S-P-Correlation-with-Economic-Indicators
