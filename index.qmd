@@ -1,128 +1,199 @@
 ---
-title: "S&P 500 and economic indicators"
+title: "S&P 500 and Economic Indicators Analysis"
 format: html
 execute:
   echo: false
-message: false
 ---
 
-"The question remains, how do macroeconomic indicators effect the micro economy, the project seeks to answer the question of how individual firms respond to economic indicators of strength or weakness"
+## Introduction
+This project analyzes the relationship between the S&P 500 and key economic indicators. We utilized QuantMod as the package/library, to gather our data, to determine this correlation (causality, cointegration, and (PCA)), we utilized tests for causality, tests for correlation through PCA, and cointegration. Although some of these tests might not seem directly measure of correlation, they provide insight into the variables, that could be interpreted as a correlation
 
-```{r}
-options(repos = c(CRAN = "https://cloud.r-project.org"))
+## Setup
 
-install.packages(c("quantmod", "tidyverse", "data.table"))
-library(quantmod)
-library(tidyverse)
-library(data.table)
+Inside we have imported, various libraries, most important being quantmod, which contains our data.
+
+```{r setup, message=FALSE, warning=FALSE, output=FALSE}
+#| label: package-setup
+#| include: false
+
+# Install and load required packages
+required_packages <- c("quantmod", "vars", "igraph", "ggplot2", "tidyverse", "roll", "lmtest", "urca")
+new_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
+if(length(new_packages)) install.packages(new_packages)
+
+suppressPackageStartupMessages({
+  library(quantmod)
+  library(vars)
+  library(igraph)
+  library(ggplot2)
+  library(tidyverse)
+  library(roll)
+  library(lmtest)
+  library(urca)
+})
 ```
+# Downloading Data
+Here we download data from Yahoo Finance, (CPI), Federal Funds Rate (FFR)
 ```{r}
 # Get S&P 500 data from Yahoo Finance
-
-getSymbols("^GSPC", src = "yahoo", from = "1974-01-01", to = Sys.Date())
+GSPC <- getSymbols("^GSPC", src = "yahoo", from = "1974-01-01", to = Sys.Date(), auto.assign = FALSE)
 sp500_data <- data.frame(date = index(GSPC), coredata(GSPC))
-```
-```{r}
-# Example: Download Consumer Price Index (CPI) data as a proxy for inflation
-getSymbols("CPIAUCSL", src = "FRED", from = "1974-01-01", to = Sys.Date())
+
+# Download Consumer Price Index (CPI) data as a proxy for inflation
+CPIAUCSL <- getSymbols("CPIAUCSL", src = "FRED", from = "1974-01-01", to = Sys.Date(), auto.assign = FALSE)
 inflation_data <- data.frame(date = index(CPIAUCSL), coredata(CPIAUCSL))
 
-# Example: Download Federal Funds Rate data
-getSymbols("FEDFUNDS", src = "FRED", from = "1974-01-01", to = Sys.Date())
+# Download Federal Funds Rate data
+FEDFUNDS <- getSymbols("FEDFUNDS", src = "FRED", from = "1974-01-01", to = Sys.Date(), auto.assign = FALSE)
 interest_rate_data <- data.frame(date = index(FEDFUNDS), coredata(FEDFUNDS))
-
 ```
-```{r}
+
+## Data Preperation
+Inside of this section of the project, we merge the data into one data frame, check for missing data, and convert dates to Date type if needed.
+```{r setup, warning=FALSE}
 # Convert dates to Date type if necessary
 sp500_data$date <- as.Date(sp500_data$date)
 inflation_data$date <- as.Date(inflation_data$date)
 interest_rate_data$date <- as.Date(interest_rate_data$date)
 
 # Merge data into a single data frame
-merged_data <- reduce(list(sp500_data, inflation_data, interest_rate_data), function(x, y) merge(x, y, by = "date", all = TRUE))
+merged_data <- sp500_data %>%
+  left_join(inflation_data, by = "date") %>%
+  left_join(interest_rate_data, by = "date")
 
 # Rename columns for clarity
 colnames(merged_data) <- c("date", "SP500_Open", "SP500_High", "SP500_Low", "SP500_Close", "SP500_Volume", "SP500_Adjusted", "CPI", "Federal_Funds_Rate")
 
-```
-
-```{r}
-  # Check for missing data
-summary(merged_data)
-
-# Handle missing data (example: fill forward method)
-merged_data <- merged_data %>% fill(CPI, .direction = "down") %>% fill(Federal_Funds_Rate, .direction = "down")
-
-```
-
-```{r}
-# Correlation analysis
-correlation_matrix <- merged_data %>% select(-date) %>% cor(use = "complete.obs")
-print(correlation_matrix)
-
-# Plotting
-ggplot(merged_data, aes(x = date)) +
-  geom_line(aes(y = SP500_Close, color = "S&P 500")) +
-  geom_line(aes(y = CPI, color = "CPI")) +
-  geom_line(aes(y = Federal_Funds_Rate, color = "Federal Funds Rate")) +
-  labs(title = "S&P 500 vs Economic Indicators", y = "Value", color = "Legend") +
-  theme_minimal()
-
-```
-now that's not very useful is it, we seem to need to go into the short-term, to analyze the effects of these indicators.
-We will choose dates of rates changes.
-
-```{r}
-# Get S&P 500 data from Yahoo Finance
-getSymbols("^GSPC", src = "yahoo", from = "2000-01-01", to = Sys.Date())
-sp500_data <- data.frame(date = index(GSPC), coredata(GSPC))
-
-# Inspect column names of sp500_data
-print(colnames(sp500_data))
-
-# Download Federal Funds Rate data
-getSymbols("FEDFUNDS", src = "FRED", from = "2000-01-01", to = Sys.Date())
-interest_rate_data <- data.frame(date = index(FEDFUNDS), coredata(FEDFUNDS))
+# Check for missing data and handle it
+merged_data <- merged_data %>% 
+  fill(CPI, .direction = "down") %>% 
+  fill(Federal_Funds_Rate, .direction = "down")
 
 
 ```
 
+# Granger Causality Analysis
 ```{r}
-# Identify dates when the Federal Funds Rate changed
-interest_rate_data <- interest_rate_data %>%
-  mutate(rate_change = c(NA, diff(FEDFUNDS))) %>%
-  filter(!is.na(rate_change) & rate_change != 0) %>%
-  select(date, FEDFUNDS, rate_change)
+library(tseries)
+library(vars)
+library(lmtest)
+library(tidyverse)
 
-rate_change_dates <- interest_rate_data$date
+# Check for NA values
 
+# Remove NA values
+clean_data <- merged_data %>%
+  select(date, Federal_Funds_Rate, SP500_Close) %>%
+  na.omit()
 
-```
-```{r}
-# Function to get S&P 500 performance around rate change dates
-get_performance_around_date <- function(date, window = 30) {
-  start_date <- date - window
-  end_date <- date + window
-  sp500_subset <- sp500_data %>%
-    filter(date >= start_date & date <= end_date)
-  
-  sp500_subset %>%
-    mutate(days_from_change = as.integer(date - date)) %>%
-    select(date, days_from_change, GSPC.Close)
+# Verify data
+
+# Check stationarity
+
+# Calculate differences
+clean_data$d_ffr <- c(NA, diff(clean_data$Federal_Funds_Rate))
+clean_data$d_sp500 <- c(NA, diff(clean_data$SP500_Close))
+
+# Remove the NA created by differencing
+clean_data <- clean_data %>% na.omit()
+
+# Granger causality with multiple lags
+max_lag <- 12
+granger_results <- data.frame(lag = 1:max_lag, p_value = NA)
+
+for(lag in 1:max_lag) {
+  granger_test <- grangertest(d_sp500 ~ d_ffr, order = lag, data = clean_data)
+  granger_results$p_value[lag] <- tail(granger_test$`Pr(>F)`, 1)
 }
 
-# Analyze S&P 500 performance around each rate change date
-performance_data <- bind_rows(lapply(rate_change_dates, get_performance_around_date))
+# Plot results
+ggplot(granger_results, aes(x = lag, y = p_value)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(yintercept = 0.05, linetype = "dashed", color = "red") +
+  theme_minimal() +
+  labs(title = "Granger Causality p-values: Federal Funds Rate → S&P 500",
+       x = "Lag (months)", y = "p-value")
 
-# Plotting the performance
-ggplot(performance_data, aes(x = days_from_change, y = GSPC.Close, group = date)) +
-  geom_line(alpha = 0.5) +
-  labs(title = "S&P 500 Performance Around Federal Funds Rate Changes",
-       x = "Days from Rate Change",
-       y = "S&P 500 Close Price") +
-  theme_minimal()
+# Correlation analysis
+cor_test <- cor.test(clean_data$d_ffr, clean_data$d_sp500)
+
+# VAR model
+var_data <- cbind(clean_data$d_ffr, clean_data$d_sp500)
+var_model <- VAR(var_data, p = 1, type = "const")
+```
+This is an causality analysis employing a few tests, first is lags, due to the intervals between the relevant data, ie when the fed changes interest rates, or proceeds with a meeting. We can observe that the p-values consistently hover above 0.05 suggesting that there is no meaningful statistical evidence to establish      Granger causality, between the federal funds rate and the S&P. However, due to inherent limitations in computing, we only employed a linear analysis (basically just a fancy linear regression model) thus there could be a non-linear causality between the federal funds rate and the S&P 500.
+
+
+# Principal Component Analysis
+
+```{r}
+pca_data <- merged_data %>% select(SP500_Close, CPI, Federal_Funds_Rate) %>% na.omit()
+pca_result <- prcomp(pca_data, scale. = TRUE)
+
+# Calculate loadings
+loadings <- pca_result$rotation
+
+# Create a biplot
+biplot(pca_result, scale = 0)
 
 ```
 
+This is a biplot from a Principal Component Analysis (PCA) of three variables: SP500_Close, CPI (Consumer Price Index), and Federal_Funds_Rate.
 
+The axes represent the first two principal components (PC1 and PC2). The red arrows represent the original variables projected onto the PC space:
 
+SP500_Close points towards the upper right CPI points towards the right Federal_Funds_Rate points towards the upper left
+
+The length of the arrows indicates how well each variable is represented in this 2D projection. The angles between the arrows suggest correlations:
+
+SP500_Close and CPI are positively correlated (acute angle) Federal_Funds_Rate is negatively correlated with both SP500_Close and CPI (obtuse angles)
+
+The black dots represent individual data points projected onto this space, forming a U-shaped pattern.
+
+This suggests that the S&P 500 closing price and CPI tend to move together, while the Federal Funds Rate tends to move in the opposite direction of both.
+
+# Johansen Cointegration Test 
+```{r}
+# Prepare data for cointegration test
+cointegration_data <- merged_data %>%
+  select(SP500_Close, CPI, Federal_Funds_Rate) %>%
+  na.omit()
+
+# Perform Johansen Cointegration Test
+johansen_test <- ca.jo(cointegration_data, type = "trace", K = 2, ecdet = "const", spec = "longrun")
+
+# Extract test statistics and critical values
+summary_jo <- summary(johansen_test)
+test_stats <- summary_jo@teststat
+crit_vals <- summary_jo@cval
+
+# Create a data frame for plotting
+cointegration_df <- data.frame(
+  r = 0:2,
+  test_statistic = test_stats,
+  cv_10 = crit_vals[,1],
+  cv_5 = crit_vals[,2],
+  cv_1 = crit_vals[,3]
+)
+
+# Plot
+ggplot(cointegration_df, aes(x = factor(r))) +
+  geom_point(aes(y = test_statistic), color = "red", size = 3) +
+  geom_line(aes(y = cv_10, group = 1), linetype = "dashed", color = "blue") +
+  geom_line(aes(y = cv_5, group = 1), linetype = "dashed", color = "green") +
+  geom_line(aes(y = cv_1, group = 1), linetype = "dashed", color = "purple") +
+  labs(title = "Johansen Cointegration Test Results",
+       x = "Number of Cointegrating Relations",
+       y = "Test Statistic / Critical Values") +
+  theme_minimal()
+
+```
+This graph shows the results of a Johansen Cointegration Test:
+
+The x-axis represents the number of cointegrating relations (0, 1, or 2). The y-axis shows the test statistic and critical values. The red dots represent the test statistics for each number of cointegrating relations. The dashed lines represent critical values at different significance levels. We see that the test statistic (red dot) is above all critical value lines for 0 cointegrating relations, suggesting we reject the null hypothesis of no cointegration. For 1 cointegrating relation, the test statistic is below the critical values, suggesting we fail to reject the null hypothesis of at most 1 cointegrating relation.
+
+This implies that there is likely one cointegrating relationship among the variables tested. This means that while the variables may individually be non-stationary, there exists a linear combination of them that is stationary, indicating a long-term equilibrium relationship between the variables.
+
+## Conclusion
+Our conclusion for our data is that the models predict that there could be a statistically significant correlation between the S&P 500 and CPI/FFR, however, it's more than likely that our models show a correlation that is non-linear, thus our tests understate the true correlation, as it discounts non-linear correlations.

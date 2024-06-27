@@ -1,0 +1,13 @@
+---
+title: "sources"
+---
+
+I learned about Granger, PCA, and Johansen Cointegration through numerous sources online: 
+https://www.youtube.com/watch?v=LxOm1kadPhk
+https://www.youtube.com/watch?v=PFDu9oVAE-g
+https://www.youtube.com/watch?v=0Jp4gsfOLMs
+https://www.youtube.com/watch?v=VjMLj7crVkw
+
+I utilized the QuantMod library, to get the S&P, Federal Funds Rate, and CPI data for the past 50 years.
+
+I utilized Claude AI, for debugging and trouble shooting.
